@@ -1,9 +1,12 @@
+# sigma_case/grader.py
 import streamlit as st
 import pandas as pd
 import numpy as np
 import time
 import os
-from .utils import clean_html_simple, get_model_path, check_model_files
+
+# Используем абсолютные импорты
+from utils import clean_html_simple, get_model_path, check_model_files
 
 class RussianExamGrader:
     def __init__(self, model_path=None):

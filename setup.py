@@ -7,9 +7,9 @@ setup(
     include_package_data=True,
     package_data={
         'sigma_case': [
-            'models/my_trained_model_2/*.json',
-            'models/my_trained_model_2/*.txt',
-            'models/my_trained_model_2/*.safetensors'
+            'my_trained_model_2/*.json',
+            'my_trained_model_2/*.txt',
+            'my_trained_model_2/*.safetensors'
         ],
     },
     install_requires=[
@@ -20,11 +20,6 @@ setup(
         'transformers>=4.30.0',
         'safetensors>=0.3.0',
     ],
-    entry_points={
-        'console_scripts': [
-            'sigma-case=sigma_case.app:main',
-        ],
-    },
     author="Your Name",
     author_email="your.email@example.com",
     description="Automatic grading system for Russian language exams using ML",

@@ -5,7 +5,7 @@ import numpy as np
 import time
 import os
 
-# АБСОЛЮТНЫЙ импорт - убрана точка перед utils
+# Абсолютные импорты
 from utils import clean_html_simple, get_model_path, check_model_files
 
 class RussianExamGrader:
@@ -18,36 +18,48 @@ class RussianExamGrader:
         self.tokenizer = None
         self.device = "CPU"
         
+        st.info(f"📁 Путь к модели: {model_path}")
+        st.info(f"📁 Папка существует: {os.path.exists(model_path)}")
+        
         # Проверяем файлы модели
         existing_files, missing_files = check_model_files(model_path)
         
-        if existing_files:
-            st.success(f"✅ Найдены файлы модели: {', '.join(existing_files)}")
+        # Детальная диагностика
+        st.write("🔍 ДЕТАЛЬНАЯ ДИАГНОСТИКА:")
         
-        if missing_files:
-            st.warning(f"⚠️ Отсутствуют файлы: {', '.join(missing_files)}")
+        if os.path.exists(model_path):
+            st.write("📁 Содержимое папки модели:")
+            for file in os.listdir(model_path):
+                file_path = os.path.join(model_path, file)
+                file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
+                st.write(f"  - {file} ({file_size} байт)")
+        
+        st.write(f"✅ Найдены файлы: {existing_files}")
+        st.write(f"❌ Отсутствуют файлы: {missing_files}")
         
         # Пытаемся загрузить модель если есть все необходимые файлы
         has_model_weights = any(f in existing_files for f in ['model.safetensors', 'pytorch_model.bin', 'tf_model.h5'])
         has_config = 'config.json' in existing_files
         has_tokenizer = all(f in existing_files for f in ['tokenizer_config.json', 'vocab.txt'])
         
-        # Отладочная информация
-        st.write("🔍 Отладочная информация:")
-        st.write(f"Найдены веса модели: {has_model_weights}")
-        st.write(f"Найден config: {has_config}")
-        st.write(f"Найден токенизатор: {has_tokenizer}")
+        st.write("📊 Условия загрузки:")
+        st.write(f"  - Веса модели: {has_model_weights}")
+        st.write(f"  - Конфиг: {has_config}")
+        st.write(f"  - Токенизатор: {has_tokenizer}")
+        st.write(f"  - Все условия выполнены: {has_model_weights and has_config and has_tokenizer}")
         
         if has_model_weights and has_config and has_tokenizer:
             try:
                 self._load_model()
             except Exception as e:
-                st.error(f"❌ Ошибка загрузки модели: {e}")
+                st.error(f"❌ Ошибка загрузки модели: {str(e)}")
+                import traceback
+                st.error(f"🔍 Детали ошибки: {traceback.format_exc()}")
                 st.info("💡 Используется демо-режим")
         else:
             st.info("🎯 Используется демо-режим оценки")
             if not has_model_weights:
-                st.warning("⚠️ Не найдены веса модели (ожидается model.safetensors или pytorch_model.bin)")
+                st.warning("⚠️ Не найдены веса модели")
             if not has_config:
                 st.warning("⚠️ Не найден config.json")
             if not has_tokenizer:
@@ -56,10 +68,18 @@ class RussianExamGrader:
     def _load_model(self):
         """Загрузка ML модели"""
         try:
+            st.info("🔄 Начинаем загрузку модели...")
+            
             import torch
             from transformers import AutoTokenizer, AutoModelForSequenceClassification
             
-            st.info("🔄 Загружаем модель...")
+            st.info("📥 Загружаем токенизатор...")
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
+            st.success("✅ Токенизатор загружен")
+            
+            st.info("📥 Загружаем модель...")
+            self.model = AutoModelForSequenceClassification.from_pretrained(self.model_path)
+            st.success("✅ Модель загружена")
             
             # Определяем устройство
             if torch.cuda.is_available():
@@ -69,27 +89,21 @@ class RussianExamGrader:
                 self.device = torch.device('cpu')
                 st.info("💻 Используется CPU")
             
-            # Загрузка токенизатора и модели
-            st.info("📥 Загружаем токенизатор...")
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
-            
-            st.info("📥 Загружаем модель...")
-            self.model = AutoModelForSequenceClassification.from_pretrained(self.model_path)
-            
             st.info("⚡ Переносим модель на устройство...")
             self.model.to(self.device)
             self.model.eval()
             
-            st.success("✅ Модель успешно загружена!")
+            st.success("✅ Модель успешно загружена и готова к работе!")
             
         except ImportError as e:
             st.error(f"❌ Не установлены ML зависимости: {e}")
             st.info("💡 Установите: pip install torch transformers")
-            st.info("💡 Используется демо-режим")
+            raise
         except Exception as e:
             st.error(f"❌ Ошибка загрузки модели: {e}")
-            st.info("💡 Используется демо-режим")
+            raise
     
+    # ... остальные методы без изменений (predict_single_fast, _ml_predict_single, и т.д.)
     def predict_single_fast(self, question_text, transcription_text, question_number):
         """Оценка одного ответа"""
         if self.model is None:

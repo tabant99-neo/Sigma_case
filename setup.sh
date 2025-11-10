@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Убедимся, что все зависимости установлены
+# Установка всех зависимостей
 pip install -r requirements.txt
 
-# Создаем папку для модели, если её нет
-mkdir -p my_trained_model_2
+# Дополнительная установка если нужно
+pip install beautifulsoup4==4.12.2

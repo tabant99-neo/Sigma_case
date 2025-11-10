@@ -1,1 +1,2 @@
-my_trained_model_2/** filter=lfs diff=lfs merge=lfs -text
+sigma_case/my_trained_model_2/*.safetensors filter=lfs diff=lfs merge=lfs -text
+sigma_case/my_trained_model_2/*.bin filter=lfs diff=lfs merge=lfs -text

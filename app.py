@@ -30,14 +30,20 @@ MODEL_NAME = "DeepPavlov/rubert-base-cased"
 # --- ОПТИМИЗИРОВАННАЯ ЛОГИКА ПРЕОБРАБОТКИ ---
 
 def clean_html(html_text):
-    """Быстрая очистка HTML"""
+    """Простая очистка HTML без BeautifulSoup"""
     if pd.isna(html_text): 
         return ""
-    soup = BeautifulSoup(html_text, 'html.parser')
-    text = soup.get_text(separator=' ', strip=True)
+    
+    # Простая замена HTML тегов через регулярные выражения
+    text = re.sub(r'<[^>]+>', '', str(html_text))  # Удаляем все HTML теги
+    text = re.sub(r'&nbsp;', ' ', text)  # Заменяем неразрывные пробелы
+    text = re.sub(r'&amp;', '&', text)   # Заменяем HTML entities
+    text = re.sub(r'&lt;', '<', text)
+    text = re.sub(r'&gt;', '>', text)
+    text = re.sub(r'&quot;', '"', text)
     text = re.sub(r'–\s*', '', text)
-    text = re.sub(r'\s{2,}', ' ', text)
-    return text
+    text = re.sub(r'\s{2,}', ' ', text)  # Убираем множественные пробелы
+    return text.strip()
 
 def normalize_score(score_series):
     return score_series.astype(float)
@@ -540,3 +546,4 @@ st.markdown(
     "Ускорение 10-20x • "
     "MAE: 0.26"
 )
+

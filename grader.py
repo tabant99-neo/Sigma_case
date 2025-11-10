@@ -5,7 +5,7 @@ import numpy as np
 import time
 import os
 
-# Используем абсолютные импорты
+# АБСОЛЮТНЫЙ импорт - убрана точка перед utils
 from utils import clean_html_simple, get_model_path, check_model_files
 
 class RussianExamGrader:

@@ -27,8 +27,18 @@ class RussianExamGrader:
         if missing_files:
             st.warning(f"⚠️ Отсутствуют файлы: {', '.join(missing_files)}")
         
-        # Пытаемся загрузить модель если есть основные файлы
-        if any(f in existing_files for f in ['model.safetensors', 'pytorch_model.bin']) and 'config.json' in existing_files:
+        # Пытаемся загрузить модель если есть все необходимые файлы
+        has_model_weights = any(f in existing_files for f in ['model.safetensors', 'pytorch_model.bin', 'tf_model.h5'])
+        has_config = 'config.json' in existing_files
+        has_tokenizer = all(f in existing_files for f in ['tokenizer_config.json', 'vocab.txt'])
+        
+        # Отладочная информация
+        st.write("🔍 Отладочная информация:")
+        st.write(f"Найдены веса модели: {has_model_weights}")
+        st.write(f"Найден config: {has_config}")
+        st.write(f"Найден токенизатор: {has_tokenizer}")
+        
+        if has_model_weights and has_config and has_tokenizer:
             try:
                 self._load_model()
             except Exception as e:
@@ -36,6 +46,12 @@ class RussianExamGrader:
                 st.info("💡 Используется демо-режим")
         else:
             st.info("🎯 Используется демо-режим оценки")
+            if not has_model_weights:
+                st.warning("⚠️ Не найдены веса модели (ожидается model.safetensors или pytorch_model.bin)")
+            if not has_config:
+                st.warning("⚠️ Не найден config.json")
+            if not has_tokenizer:
+                st.warning("⚠️ Не найден токенизатор")
     
     def _load_model(self):
         """Загрузка ML модели"""
@@ -54,8 +70,13 @@ class RussianExamGrader:
                 st.info("💻 Используется CPU")
             
             # Загрузка токенизатора и модели
+            st.info("📥 Загружаем токенизатор...")
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
+            
+            st.info("📥 Загружаем модель...")
             self.model = AutoModelForSequenceClassification.from_pretrained(self.model_path)
+            
+            st.info("⚡ Переносим модель на устройство...")
             self.model.to(self.device)
             self.model.eval()
             

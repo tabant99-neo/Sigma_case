@@ -50,15 +50,23 @@ def clean_html_simple(html_text):
 def check_model_files(model_path):
     """Проверяем наличие всех файлов модели"""
     required_files = [
-        'pytorch_model.bin',
         'config.json', 
         'tokenizer_config.json',
-        'vocab.txt'
+        'vocab.txt',
+        'special_tokens_map.json'
+    ]
+    
+    # Проверяем наличие весов модели в любом формате
+    model_weight_files = [
+        'model.safetensors',  # Новый формат
+        'pytorch_model.bin',  # Старый формат
+        'tf_model.h5'         # TensorFlow формат
     ]
     
     existing_files = []
     missing_files = []
     
+    # Проверяем основные файлы
     for file in required_files:
         file_path = os.path.join(model_path, file)
         if os.path.exists(file_path):
@@ -66,11 +74,23 @@ def check_model_files(model_path):
         else:
             missing_files.append(file)
     
+    # Проверяем веса модели
+    model_weights_found = False
+    for weight_file in model_weight_files:
+        file_path = os.path.join(model_path, weight_file)
+        if os.path.exists(file_path):
+            existing_files.append(weight_file)
+            model_weights_found = True
+            break
+    
+    if not model_weights_found:
+        missing_files.append('model_weights (любой формат)')
+    
     return existing_files, missing_files
 
 # Класс для работы с моделью
 class RussianExamGrader:
-    def __init__(self, model_path="my_trained_model_2"):
+    def __init__(self, model_path="."):  # Изменил путь на текущую директорию
         self.model_path = model_path
         self.model = None
         self.tokenizer = None
@@ -85,8 +105,8 @@ class RussianExamGrader:
         if missing_files:
             st.warning(f"⚠️ Отсутствуют файлы: {', '.join(missing_files)}")
         
-        # Пытаемся загрузить модель если есть все основные файлы
-        if 'pytorch_model.bin' in existing_files and 'config.json' in existing_files:
+        # Пытаемся загрузить модель если есть основные файлы
+        if any(f in existing_files for f in ['model.safetensors', 'pytorch_model.bin']) and 'config.json' in existing_files:
             try:
                 self._load_model()
             except Exception as e:
@@ -112,6 +132,7 @@ class RussianExamGrader:
                 st.info("💻 Используется CPU")
             
             # Загрузка токенизатора и модели
+            # from_pretrained автоматически определит формат весов
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
             self.model = AutoModelForSequenceClassification.from_pretrained(self.model_path)
             self.model.to(self.device)
@@ -121,6 +142,7 @@ class RussianExamGrader:
             
         except ImportError as e:
             st.error(f"❌ Не установлены ML зависимости: {e}")
+            st.info("💡 Установите: pip install torch transformers")
             st.info("💡 Используется демо-режим")
         except Exception as e:
             st.error(f"❌ Ошибка загрузки модели: {e}")
@@ -318,9 +340,6 @@ def load_grader():
 # Загружаем градер
 grader = load_grader()
 
-# Дальше тот же интерфейс что и в предыдущем коде...
-# [ОСТАВЬТЕ ВЕСЬ ИНТЕРФЕЙС ИЗ ПРЕДЫДУЩЕГО КОДА БЕЗ ИЗМЕНЕНИЙ]
-
 # Создаем вкладки
 tab1, tab2 = st.tabs(["🎯 Оценить один ответ", "📊 Оценить файл CSV"])
 
@@ -507,7 +526,7 @@ with st.sidebar:
     
     # Информация о модели
     st.subheader("📦 Модель")
-    existing_files, missing_files = check_model_files("my_trained_model_2")
+    existing_files, missing_files = check_model_files(".")
     
     if existing_files:
         st.success(f"Файлы: {len(existing_files)}/{len(existing_files) + len(missing_files)}")

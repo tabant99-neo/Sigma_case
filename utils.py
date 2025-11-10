@@ -31,7 +31,7 @@ def clean_html_simple(html_text):
 def get_model_path():
     """Возвращает абсолютный путь к папке с моделью"""
     current_dir = os.path.dirname(__file__)
-    model_path = os.path.join(current_dir, "models", "my_trained_model_2")
+    model_path = os.path.join(current_dir, "my_trained_model_2")  # ← ИЗМЕНЕНО
     return model_path
 
 def check_model_files(model_path):

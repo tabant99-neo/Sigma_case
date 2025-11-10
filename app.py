@@ -2,14 +2,15 @@
 import streamlit as st
 import pandas as pd
 import time
-import sys
 import os
+import sys
 
 # Добавляем текущую директорию в путь для импортов
-current_dir = os.path.dirname(__file__)
-sys.path.insert(0, current_dir)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
 
-# Теперь импортируем из текущей папки
+# Импортируем из текущей папки
 from grader import RussianExamGrader
 from utils import safe_read_csv, check_model_files, get_model_path
 

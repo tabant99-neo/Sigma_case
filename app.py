@@ -1,8 +1,17 @@
+# sigma_case/app.py
 import streamlit as st
 import pandas as pd
 import time
-from .grader import RussianExamGrader
-from .utils import safe_read_csv, check_model_files, get_model_path
+import sys
+import os
+
+# Добавляем текущую директорию в путь для импортов
+current_dir = os.path.dirname(__file__)
+sys.path.insert(0, current_dir)
+
+# Теперь импортируем из текущей папки
+from grader import RussianExamGrader
+from utils import safe_read_csv, check_model_files, get_model_path
 
 # Конфигурация страницы
 st.set_page_config(

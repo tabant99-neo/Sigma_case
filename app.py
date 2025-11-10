@@ -231,7 +231,7 @@ def create_app():
                                         
                                         # Скачивание
                                         st.subheader("💾 Скачать результаты")
-                                        csv_result = result_df.to_csv(index=False, sep=';').encode('utf-8)
+                                        csv_data = result_df.to_csv(index=False, sep=';').encode('utf-8')
                                         st.download_button(
                                             label="📥 Скачать результаты (CSV)",
                                             data=csv_result,
@@ -283,3 +283,4 @@ def create_app():
     )
     
     return st
+

@@ -1,5 +1,11 @@
-streamlit==1.28.0
-pandas==2.1.4
-numpy==1.24.3
+streamlit
+torch
+transformers
+pandas
+numpy
+scikit-learn
+sentencepiece
+protobuf
+
 
 

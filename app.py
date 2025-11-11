@@ -40,6 +40,9 @@ if 'graded_results' not in st.session_state:
 if 'model_loaded' not in st.session_state:
     st.session_state.model_loaded = False
 
+if 'grader_instance' not in st.session_state:
+    st.session_state.grader_instance = None
+
 # Заголовок приложения
 st.title("🇷🇺 Автоматическая оценка экзамена по русскому языку")
 st.markdown("""
@@ -147,15 +150,29 @@ class RussianExamGrader:
             # Резервный вариант - обработка по одному
             return [self.predict(text) for text in texts]
 
-# Функция для безопасного чтения CSV
+# Функция для безопасного чтения CSV с приоритетом для UTF-8 и разделителя ';'
 def safe_read_csv(uploaded_file):
-    """Безопасное чтение CSV с различными кодировками и разделителями"""
+    """Безопасное чтение CSV с приоритетом для UTF-8 и разделителя ';'"""
+    
+    # Сначала пробуем UTF-8 с разделителем ';' (основной вариант)
+    try:
+        uploaded_file.seek(0)
+        df = pd.read_csv(uploaded_file, encoding='utf-8', sep=';', on_bad_lines='skip')
+        if len(df.columns) > 0 and len(df) > 0:
+            st.success(f"✅ Файл прочитан с кодировкой UTF-8 и разделителем ';'")
+            st.info(f"📊 Данные: {len(df)} строк, {len(df.columns)} столбцов")
+            return df
+    except Exception as e:
+        st.warning(f"⚠️ Не удалось прочитать с UTF-8 и ';': {e}")
+    
+    # Затем пробуем другие варианты
     encodings = ['utf-8', 'cp1251', 'windows-1251', 'iso-8859-1', 'latin1']
+    separators = [',', '\t']
     
     for encoding in encodings:
         try:
             uploaded_file.seek(0)
-            for sep in [',', ';', '\t']:
+            for sep in separators:
                 try:
                     uploaded_file.seek(0)
                     df = pd.read_csv(uploaded_file, encoding=encoding, sep=sep, on_bad_lines='skip')
@@ -170,17 +187,17 @@ def safe_read_csv(uploaded_file):
         except Exception as e:
             continue
     
-    # Последняя попытка
+    # Последняя попытка с engine='python'
     try:
         uploaded_file.seek(0)
-        df = pd.read_csv(uploaded_file, encoding='utf-8', on_bad_lines='skip', engine='python')
+        df = pd.read_csv(uploaded_file, encoding='utf-8', sep=None, engine='python', on_bad_lines='skip')
         if len(df) > 0:
-            st.info("Файл прочитан с пропуском проблемных строк")
+            st.info("Файл прочитан с автоматическим определением разделителя")
             return df
     except Exception as e:
         st.error(f"Ошибка при чтении файла: {e}")
     
-    raise ValueError("Не удалось прочитать файл")
+    raise ValueError("Не удалось прочитать файл. Убедитесь, что файл в формате CSV с кодировкой UTF-8 и разделителем ';'")
 
 # Оптимизированная функция для обработки больших CSV файлов
 def process_large_dataset(df, grader, selected_column, chunk_size=500):
@@ -249,7 +266,6 @@ def process_large_dataset(df, grader, selected_column, chunk_size=500):
             
             # Принудительное обновление интерфейса
             time.sleep(0.1)  # Небольшая задержка для обновления UI
-            st.rerun()
         
         # Завершаем обработку
         st.session_state.processing_state['is_processing'] = False
@@ -273,7 +289,6 @@ def process_large_dataset(df, grader, selected_column, chunk_size=500):
         return None
 
 # Инициализация модели
-@st.cache_resource
 def load_grader():
     model_path = "my_trained_model_2"
     
@@ -309,12 +324,13 @@ with tab1:
     
     # Сначала загружаем модель если еще не загружена
     if not st.session_state.model_loaded:
-        if st.button("🔄 Загрузить модель для оценки"):
+        if st.button("🔄 Загрузить модель для оценки", key="load_model_single"):
             with st.spinner("Загружаем модель..."):
                 grader = load_grader()
                 if grader is None:
                     st.error("Не удалось загрузить модель")
                 else:
+                    st.session_state.grader_instance = grader
                     st.rerun()
     else:
         user_input = st.text_area(
@@ -328,7 +344,7 @@ with tab1:
             if user_input.strip():
                 with st.spinner("🤖 Модель оценивает ответ..."):
                     start_time = time.time()
-                    grade = grader.predict(user_input)
+                    grade = st.session_state.grader_instance.predict(user_input)
                     processing_time = time.time() - start_time
                 
                 st.success(f"**Предсказанная оценка: {grade} / 5**")
@@ -365,15 +381,17 @@ with tab2:
     
     st.markdown("""
     Загрузите CSV-файл с ответами студентов. Поддерживаются большие файлы (10,000+ строк).
+    **Рекомендуемый формат:** UTF-8 с разделителем ';'
     """)
     
     # Сначала проверяем загружена ли модель
     if not st.session_state.model_loaded:
         st.warning("⚠️ Модель не загружена")
-        if st.button("🔄 Загрузить модель для пакетной обработки"):
+        if st.button("🔄 Загрузить модель для пакетной обработки", key="load_model_batch"):
             with st.spinner("Загружаем модель..."):
                 grader = load_grader()
                 if grader is not None:
+                    st.session_state.grader_instance = grader
                     st.success("✅ Модель готова к работе!")
                     st.rerun()
     else:
@@ -434,8 +452,13 @@ with tab2:
                         'selected_column': selected_column
                     })
                     
-                    # Запускаем обработку
-                    result_df = process_large_dataset(df, grader, selected_column, chunk_size)
+                    # Запускаем обработку с использованием grader из session_state
+                    result_df = process_large_dataset(
+                        df, 
+                        st.session_state.grader_instance, 
+                        selected_column, 
+                        chunk_size
+                    )
                     
                     if result_df is not None:
                         st.session_state.graded_results = result_df
@@ -503,7 +526,7 @@ with tab3:
         # Скачивание результатов
         st.subheader("💾 Скачать результаты")
         
-        csv_data = result_df.to_csv(index=False).encode('utf-8')
+        csv_data = result_df.to_csv(index=False, sep=';').encode('utf-8')
         st.download_button(
             label=f"📥 Скачать все результаты ({len(result_df)} строк)",
             data=csv_data,
@@ -522,6 +545,7 @@ with st.sidebar:
     - Обученная модель DeepPavlov
     - Пакетная обработка
     - Поддержка больших файлов
+    - Формат: CSV (UTF-8, ;)
     """)
     
     st.header("📊 Статус")
@@ -542,4 +566,4 @@ with st.sidebar:
 
 # Футер
 st.markdown("---")
-st.markdown("**Система оценки экзаменационных ответов** • Обученная модель DeepPavlov")
+st.markdown("**Система оценки экзаменационных ответов** • Обученная модель DeepPavlov • Формат: CSV (UTF-8, ;)")

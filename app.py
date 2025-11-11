@@ -12,7 +12,7 @@ import gc
 
 # Конфигурация страницы
 st.set_page_config(
-    page_title="Оценка экзамена по русскому языку",
+    page_title="Автоматическая оценка экзамена по русскому языку",
     page_icon="🇷🇺",
     layout="wide"
 )
@@ -37,6 +37,9 @@ if 'processing_state' not in st.session_state:
 if 'graded_results' not in st.session_state:
     st.session_state.graded_results = None
 
+if 'model_loaded' not in st.session_state:
+    st.session_state.model_loaded = False
+
 # Заголовок приложения
 st.title("🇷🇺 Автоматическая оценка экзамена по русскому языку")
 st.markdown("""
@@ -44,97 +47,105 @@ st.markdown("""
 Загрузите CSV-файл с ответами студентов или введите текст вручную.
 """)
 
-# Упрощенная модель для демонстрации
-class SimpleRussianGrader:
-    def __init__(self):
+# Основной класс для оценки с обученной моделью
+class RussianExamGrader:
+    def __init__(self, model_path):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        st.info(f"🔄 Загружаем модель из: {model_path}")
         
-        # Эвристики для оценки русских текстов
-        self.quality_indicators = {
-            'length_weight': 0.2,
-            'vocabulary_weight': 0.3,
-            'structure_weight': 0.3,
-            'grammar_weight': 0.2
-        }
-        
-        # Примеры хороших фраз на русском
-        self.good_phrases = [
-            'мне кажется', 'по моему мнению', 'с одной стороны', 'с другой стороны',
-            'таким образом', 'в заключение', 'во-первых', 'во-вторых', 'в-третьих',
-            'кроме того', 'например', 'таким образом', 'следовательно', 'однако',
-            'поэтому', 'в результате', 'в целом', 'подводя итог'
-        ]
+        try:
+            # Проверяем существование пути к модели
+            if not os.path.exists(model_path):
+                raise FileNotFoundError(f"Model path not found: {model_path}")
+            
+            # Загружаем токенизатор и модель
+            self.tokenizer = AutoTokenizer.from_pretrained(model_path)
+            self.model = AutoModelForSequenceClassification.from_pretrained(model_path)
+            
+            # Переносим модель на устройство (GPU/CPU)
+            self.model.to(self.device)
+            self.model.eval()
+            
+            st.success("✅ Обученная модель успешно загружена!")
+            st.session_state.model_loaded = True
+            
+        except Exception as e:
+            st.error(f"❌ Ошибка при загрузке модели: {e}")
+            st.info("""
+            **Решение проблемы:**
+            1. Убедитесь, что папка с моделью существует
+            2. Проверьте наличие файлов: pytorch_model.bin, config.json
+            3. Модель должна быть в папке 'my_trained_model_2'
+            """)
+            raise e
 
     def preprocess_text(self, text):
         """Базовая очистка текста."""
-        text = str(text).lower().strip()
+        text = str(text).strip()
         if not text:
             return ""
-        text = re.sub(r'[^\w\s]', ' ', text)
-        text = re.sub(r'\s+', ' ', text)
+        # Минимальная предобработка - модель обучена на оригинальных текстах
         return text
-
-    def analyze_text_quality(self, text):
-        """Анализ качества текста с помощью эвристик."""
-        if not text or len(str(text).strip()) == 0:
-            return 0.0
-            
-        text = self.preprocess_text(text)
-        words = text.split()
-        
-        if len(words) == 0:
-            return 0.0
-        
-        # 1. Оценка по длине
-        length_score = min(len(words) / 30, 1.0)  # Нормализуем к 30 словам
-        
-        # 2. Оценка по разнообразию лексики
-        unique_words = len(set(words))
-        vocab_score = min(unique_words / max(len(words), 1) * 2, 1.0)
-        
-        # 3. Оценка структуры (наличие хороших фраз)
-        structure_score = 0
-        for phrase in self.good_phrases:
-            if phrase in text:
-                structure_score += 0.05
-        structure_score = min(structure_score, 1.0)
-        
-        # 4. Простая оценка грамматики (количество очень коротких слов)
-        short_words = sum(1 for word in words if len(word) <= 2)
-        grammar_score = 1.0 - min(short_words / max(len(words), 1) * 1.5, 1.0)
-        
-        # Итоговая оценка
-        final_score = (
-            length_score * self.quality_indicators['length_weight'] +
-            vocab_score * self.quality_indicators['vocabulary_weight'] +
-            structure_score * self.quality_indicators['structure_weight'] +
-            grammar_score * self.quality_indicators['grammar_weight']
-        )
-        
-        return min(final_score * 5, 5.0)  # Масштабируем до 5 баллов
 
     def predict(self, text):
         """Предсказание оценки для одного текста."""
         try:
-            return round(self.analyze_text_quality(text), 2)
-        except Exception:
+            if not text or len(str(text).strip()) == 0:
+                return 0.0
+                
+            processed_text = self.preprocess_text(text)
+            
+            # Токенизация
+            inputs = self.tokenizer(
+                processed_text,
+                max_length=512,
+                padding='max_length',
+                truncation=True,
+                return_tensors='pt'
+            ).to(self.device)
+
+            # Предсказание
+            with torch.no_grad():
+                outputs = self.model(**inputs)
+                prediction = outputs.logits.cpu().numpy()
+
+            # Преобразуем в оценку 0-5
+            grade = float(prediction[0][0])
+            grade = max(0, min(5, grade))
+            return round(grade, 2)
+            
+        except Exception as e:
+            st.error(f"Ошибка при предсказании: {e}")
             return 0.0
 
     def predict_batch(self, texts: List[str]) -> List[float]:
         """Пакетное предсказание для ускорения обработки."""
-        return [self.predict(text) for text in texts]
+        try:
+            processed_texts = [self.preprocess_text(text) for text in texts]
+            
+            # Пакетная токенизация
+            inputs = self.tokenizer(
+                processed_texts,
+                max_length=512,
+                padding=True,
+                truncation=True,
+                return_tensors='pt'
+            ).to(self.device)
 
-# Основной класс с использованием простой модели
-class RussianExamGrader:
-    def __init__(self):
-        self.simple_grader = SimpleRussianGrader()
-        st.success("✅ Модель инициализирована (упрощенная версия)")
+            # Пакетное предсказание
+            with torch.no_grad():
+                outputs = self.model(**inputs)
+                predictions = outputs.logits.cpu().numpy()
 
-    def predict(self, text):
-        return self.simple_grader.predict(text)
-
-    def predict_batch(self, texts: List[str]) -> List[float]:
-        return self.simple_grader.predict_batch(texts)
+            # Преобразуем все оценки
+            grades = predictions[:, 0].tolist()
+            grades = [max(0, min(5, float(grade))) for grade in grades]
+            return [round(grade, 2) for grade in grades]
+            
+        except Exception as e:
+            st.error(f"Ошибка при пакетном предсказании: {e}")
+            # Резервный вариант - обработка по одному
+            return [self.predict(text) for text in texts]
 
 # Функция для безопасного чтения CSV
 def safe_read_csv(uploaded_file):
@@ -147,17 +158,11 @@ def safe_read_csv(uploaded_file):
             for sep in [',', ';', '\t']:
                 try:
                     uploaded_file.seek(0)
-                    # Используем chunksize для больших файлов
-                    chunks = []
-                    for chunk in pd.read_csv(uploaded_file, encoding=encoding, sep=sep, chunksize=10000):
-                        chunks.append(chunk)
-                    
-                    if chunks:
-                        df = pd.concat(chunks, ignore_index=True)
-                        if len(df.columns) > 0 and len(df) > 0:
-                            st.success(f"✅ Файл прочитан: {len(df)} строк, {len(df.columns)} столбцов")
-                            st.info(f"Кодировка: {encoding}, разделитель: '{sep}'")
-                            return df
+                    df = pd.read_csv(uploaded_file, encoding=encoding, sep=sep, on_bad_lines='skip')
+                    if len(df.columns) > 0 and len(df) > 0:
+                        st.success(f"✅ Файл прочитан: {len(df)} строк, {len(df.columns)} столбцов")
+                        st.info(f"Кодировка: {encoding}, разделитель: '{sep}'")
+                        return df
                 except Exception as e:
                     continue
         except UnicodeDecodeError:
@@ -172,13 +177,13 @@ def safe_read_csv(uploaded_file):
         if len(df) > 0:
             st.info("Файл прочитан с пропуском проблемных строк")
             return df
-    except:
-        pass
+    except Exception as e:
+        st.error(f"Ошибка при чтении файла: {e}")
     
     raise ValueError("Не удалось прочитать файл")
 
 # Оптимизированная функция для обработки больших CSV файлов
-def process_large_dataset(df, grader, selected_column, chunk_size=1000):
+def process_large_dataset(df, grader, selected_column, chunk_size=500):
     """Обработка больших датасетов по частям с сохранением прогресса"""
     try:
         if selected_column not in df.columns:
@@ -194,23 +199,23 @@ def process_large_dataset(df, grader, selected_column, chunk_size=1000):
         stats_container = st.container()
         
         all_grades = []
-        processed_rows = 0
         start_time = time.time()
         
         # Обрабатываем файл по частям
         for start_idx in range(0, total_rows, chunk_size):
             if not st.session_state.processing_state['is_processing']:
-                st.warning("Обработка остановлена")
+                st.warning("Обработка остановлена пользователем")
                 break
                 
             end_idx = min(start_idx + chunk_size, total_rows)
             chunk = df.iloc[start_idx:end_idx]
             
-            # Обновляем UI
+            # Обновляем прогресс
             with progress_container:
                 progress = end_idx / total_rows
                 st.progress(progress)
             
+            # Обновляем статус
             with status_container:
                 elapsed = time.time() - start_time
                 rows_per_sec = end_idx / elapsed if elapsed > 0 else 0
@@ -220,15 +225,12 @@ def process_large_dataset(df, grader, selected_column, chunk_size=1000):
                 **Прогресс:** {end_idx}/{total_rows} строк ({progress:.1%})
                 **Скорость:** {rows_per_sec:.1f} строк/сек
                 **Осталось:** {remaining_time:.0f} сек
-                **Текущая часть:** {start_idx}-{end_idx}
                 """)
             
             # Обрабатываем текущую часть
             answers = chunk[selected_column].astype(str).tolist()
             chunk_grades = grader.predict_batch(answers)
             all_grades.extend(chunk_grades)
-            
-            processed_rows = end_idx
             
             # Показываем промежуточную статистику
             with stats_container:
@@ -246,6 +248,7 @@ def process_large_dataset(df, grader, selected_column, chunk_size=1000):
                         st.metric("Макс. оценка", f"{current_max:.2f}")
             
             # Принудительное обновление интерфейса
+            time.sleep(0.1)  # Небольшая задержка для обновления UI
             st.rerun()
         
         # Завершаем обработку
@@ -272,54 +275,83 @@ def process_large_dataset(df, grader, selected_column, chunk_size=1000):
 # Инициализация модели
 @st.cache_resource
 def load_grader():
-    return RussianExamGrader()
+    model_path = "my_trained_model_2"
+    
+    # Проверяем различные возможные пути
+    possible_paths = [
+        model_path,
+        f"./{model_path}",
+        f"../{model_path}",
+        f"../../{model_path}",
+        "C:/Users/tkubanychbekov/Documents/Russian_exam_grader/my_trained_model_2"
+    ]
+    
+    for path in possible_paths:
+        if os.path.exists(path):
+            st.info(f"🎯 Найдена модель по пути: {path}")
+            return RussianExamGrader(path)
+    
+    # Если модель не найдена
+    st.error("❌ Модель не найдена по указанным путям")
+    st.info("""
+    **Пожалуйста, убедитесь что:**
+    1. Папка 'my_trained_model_2' находится в той же директории, что и этот скрипт
+    2. В папке есть файлы: pytorch_model.bin, config.json, tokenizer_config.json
+    3. Модель была успешно обучена и сохранена
+    """)
+    return None
 
-# Загружаем модель
-try:
-    grader = load_grader()
-except Exception as e:
-    st.error(f"❌ Не удалось инициализировать систему оценки: {e}")
-    st.stop()
-
-# Создаем вкладки
+# Основной интерфейс
 tab1, tab2, tab3 = st.tabs(["🎯 Оценить один ответ", "📊 Оценить файл CSV", "📈 Результаты"])
 
 with tab1:
     st.header("Оценка одного ответа")
-    user_input = st.text_area(
-        "Введите ответ студента на русском языке:",
-        height=150,
-        placeholder="Напишите здесь ответ на экзаменационный вопрос...",
-        key="single_answer"
-    )
+    
+    # Сначала загружаем модель если еще не загружена
+    if not st.session_state.model_loaded:
+        if st.button("🔄 Загрузить модель для оценки"):
+            with st.spinner("Загружаем модель..."):
+                grader = load_grader()
+                if grader is None:
+                    st.error("Не удалось загрузить модель")
+                else:
+                    st.rerun()
+    else:
+        user_input = st.text_area(
+            "Введите ответ студента на русском языке:",
+            height=150,
+            placeholder="Напишите здесь ответ на экзаменационный вопрос...",
+            key="single_answer"
+        )
 
-    if st.button("Оценить ответ", type="primary", key="single"):
-        if user_input.strip():
-            with st.spinner("🤖 Модель оценивает ответ..."):
-                start_time = time.time()
-                grade = grader.predict(user_input)
-                processing_time = time.time() - start_time
-            
-            st.success(f"**Предсказанная оценка: {grade} / 5**")
-            
-            # Визуализация оценки
-            col1, col2 = st.columns([1, 3])
-            with col1:
-                st.metric("Оценка", f"{grade}/5")
-            with col2:
-                st.progress(grade / 5.0)
-            
-            # Интерпретация оценки
-            if grade >= 4.0:
-                st.info("🎉 Отличный ответ!")
-            elif grade >= 3.0:
-                st.info("👍 Хороший ответ")
-            elif grade >= 2.0:
-                st.warning("⚠️ Удовлетворительный ответ")
+        if st.button("Оценить ответ", type="primary", key="single"):
+            if user_input.strip():
+                with st.spinner("🤖 Модель оценивает ответ..."):
+                    start_time = time.time()
+                    grade = grader.predict(user_input)
+                    processing_time = time.time() - start_time
+                
+                st.success(f"**Предсказанная оценка: {grade} / 5**")
+                st.info(f"⏱️ Время обработки: {processing_time:.2f} сек")
+                
+                # Визуализация оценки
+                col1, col2 = st.columns([1, 3])
+                with col1:
+                    st.metric("Оценка", f"{grade}/5")
+                with col2:
+                    st.progress(grade / 5.0)
+                
+                # Интерпретация оценки
+                if grade >= 4.0:
+                    st.info("🎉 Отличный ответ!")
+                elif grade >= 3.0:
+                    st.info("👍 Хороший ответ")
+                elif grade >= 2.0:
+                    st.warning("⚠️ Удовлетворительный ответ")
+                else:
+                    st.error("❌ Ответ требует улучшений")
             else:
-                st.error("❌ Ответ требует улучшений")
-        else:
-            st.warning("⚠️ Пожалуйста, введите текст для оценки.")
+                st.warning("⚠️ Пожалуйста, введите текст для оценки.")
 
 with tab2:
     st.header("Пакетная оценка из CSV-файла")
@@ -335,73 +367,83 @@ with tab2:
     Загрузите CSV-файл с ответами студентов. Поддерживаются большие файлы (10,000+ строк).
     """)
     
-    uploaded_file = st.file_uploader(
-        "Выберите CSV-файл", 
-        type=['csv'],
-        key="file_uploader"
-    )
-    
-    if uploaded_file is not None and not st.session_state.processing_state['is_processing']:
-        try:
-            # Читаем файл
-            with st.spinner("📖 Читаем файл..."):
-                df = safe_read_csv(uploaded_file)
-            
-            st.subheader("📊 Предпросмотр данных")
-            st.write(f"**Размер данных:** {len(df)} строк × {len(df.columns)} столбцов")
-            
-            # Показываем информацию о данных
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("Всего строк", len(df))
-            with col2:
-                st.metric("Всего столбцов", len(df.columns))
-            
-            # Показываем первые строки
-            with st.expander("👀 Посмотреть первые 10 строк"):
-                st.dataframe(df.head(10))
-            
-            # Выбор столбца с ответами
-            st.subheader("🎯 Выберите столбец с ответами")
-            selected_column = st.selectbox(
-                "Выберите столбец, содержащий тексты ответов:",
-                df.columns,
-                index=0
-            )
-            
-            # Настройки обработки
-            st.subheader("⚙️ Настройки обработки")
-            chunk_size = st.slider(
-                "Размер части для обработки:",
-                min_value=500,
-                max_value=5000,
-                value=1000,
-                step=500,
-                help="Меньшие значения используют меньше памяти, но могут работать медленнее"
-            )
-            
-            if st.button("🚀 Начать оценку всех ответов", type="primary"):
-                if len(df) > 10000:
-                    st.warning(f"⚠️ Внимание: большой файл ({len(df)} строк). Обработка может занять несколько минут.")
-                
-                # Сохраняем состояние
-                st.session_state.processing_state.update({
-                    'is_processing': True,
-                    'total_rows': len(df),
-                    'original_df': df,
-                    'selected_column': selected_column
-                })
-                
-                # Запускаем обработку
-                result_df = process_large_dataset(df, grader, selected_column, chunk_size)
-                
-                if result_df is not None:
-                    st.session_state.graded_results = result_df
-                    st.success("✅ Результаты готовы! Перейдите на вкладку 'Результаты'")
+    # Сначала проверяем загружена ли модель
+    if not st.session_state.model_loaded:
+        st.warning("⚠️ Модель не загружена")
+        if st.button("🔄 Загрузить модель для пакетной обработки"):
+            with st.spinner("Загружаем модель..."):
+                grader = load_grader()
+                if grader is not None:
+                    st.success("✅ Модель готова к работе!")
                     st.rerun()
-                        
-        except Exception as e:
-            st.error(f"❌ Ошибка при работе с файлом: {e}")
+    else:
+        uploaded_file = st.file_uploader(
+            "Выберите CSV-файл", 
+            type=['csv'],
+            key="file_uploader"
+        )
+        
+        if uploaded_file is not None and not st.session_state.processing_state['is_processing']:
+            try:
+                # Читаем файл
+                with st.spinner("📖 Читаем файл..."):
+                    df = safe_read_csv(uploaded_file)
+                
+                st.subheader("📊 Предпросмотр данных")
+                st.write(f"**Размер данных:** {len(df)} строк × {len(df.columns)} столбцов")
+                
+                # Показываем информацию о данных
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Всего строк", len(df))
+                with col2:
+                    st.metric("Всего столбцов", len(df.columns))
+                
+                # Показываем первые строки
+                with st.expander("👀 Посмотреть первые 10 строк"):
+                    st.dataframe(df.head(10))
+                
+                # Выбор столбца с ответами
+                st.subheader("🎯 Выберите столбец с ответами")
+                selected_column = st.selectbox(
+                    "Выберите столбец, содержащий тексты ответов:",
+                    df.columns,
+                    index=0
+                )
+                
+                # Настройки обработки
+                st.subheader("⚙️ Настройки обработки")
+                chunk_size = st.slider(
+                    "Размер части для обработки:",
+                    min_value=100,
+                    max_value=1000,
+                    value=500,
+                    step=100,
+                    help="Меньшие значения используют меньше памяти, но могут работать медленнее"
+                )
+                
+                if st.button("🚀 Начать оценку всех ответов", type="primary"):
+                    if len(df) > 10000:
+                        st.warning(f"⚠️ Внимание: большой файл ({len(df)} строк). Обработка может занять несколько минут.")
+                    
+                    # Сохраняем состояние
+                    st.session_state.processing_state.update({
+                        'is_processing': True,
+                        'total_rows': len(df),
+                        'original_df': df,
+                        'selected_column': selected_column
+                    })
+                    
+                    # Запускаем обработку
+                    result_df = process_large_dataset(df, grader, selected_column, chunk_size)
+                    
+                    if result_df is not None:
+                        st.session_state.graded_results = result_df
+                        st.success("✅ Результаты готовы! Перейдите на вкладку 'Результаты'")
+                        st.rerun()
+                            
+            except Exception as e:
+                st.error(f"❌ Ошибка при работе с файлом: {e}")
 
 with tab3:
     st.header("📈 Результаты оценки")
@@ -440,32 +482,20 @@ with tab3:
         # Детальная таблица
         st.subheader("📋 Детали оценок")
         
-        # Поиск и фильтрация
-        search_col1, search_col2 = st.columns(2)
-        with search_col1:
-            min_filter = st.slider("Минимальная оценка", 0.0, 5.0, 0.0, 0.5)
-        with search_col2:
-            max_filter = st.slider("Максимальная оценка", 0.0, 5.0, 5.0, 0.5)
-        
-        filtered_df = result_df[
-            (result_df['predicted_grade'] >= min_filter) & 
-            (result_df['predicted_grade'] <= max_filter)
-        ]
-        
-        st.write(f"**Найдено ответов:** {len(filtered_df)}")
-        
         # Показываем данные с пагинацией
         page_size = 100
-        total_pages = max(1, len(filtered_df) // page_size)
+        total_pages = max(1, len(result_df) // page_size)
         
         page = st.number_input("Страница", min_value=1, max_value=total_pages, value=1)
         
         start_idx = (page - 1) * page_size
-        end_idx = min(start_idx + page_size, len(filtered_df))
+        end_idx = min(start_idx + page_size, len(result_df))
+        
+        selected_column = st.session_state.processing_state.get('selected_column', 'answer')
         
         st.dataframe(
-            filtered_df.iloc[start_idx:end_idx][
-                [st.session_state.processing_state['selected_column'], 'predicted_grade']
+            result_df.iloc[start_idx:end_idx][
+                [selected_column, 'predicted_grade']
             ],
             height=400
         )
@@ -488,14 +518,18 @@ with tab3:
 with st.sidebar:
     st.header("ℹ️ О системе")
     st.markdown("""
-    **Возможности:**
-    - Оценка отдельных ответов
-    - Пакетная обработка CSV
+    **Используется:**
+    - Обученная модель DeepPavlov
+    - Пакетная обработка
     - Поддержка больших файлов
-    - Сохранение результатов
     """)
     
     st.header("📊 Статус")
+    if st.session_state.model_loaded:
+        st.success("✅ Модель загружена")
+    else:
+        st.error("❌ Модель не загружена")
+    
     if st.session_state.processing_state['is_processing']:
         st.warning("Идет обработка")
         progress = st.session_state.processing_state.get('current_index', 0) / max(1, st.session_state.processing_state.get('total_rows', 1))
@@ -508,4 +542,4 @@ with st.sidebar:
 
 # Футер
 st.markdown("---")
-st.markdown("**Система оценки экзаменационных ответов** • Поддержка больших файлов")
+st.markdown("**Система оценки экзаменационных ответов** • Обученная модель DeepPavlov")
